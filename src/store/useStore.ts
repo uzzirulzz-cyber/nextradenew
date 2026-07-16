@@ -54,6 +54,7 @@ export interface UserInfo {
   phone?: string;
   agentId?: string;
   mustChangePassword?: boolean;
+  passwordChangedAt?: string;
   invitationCode?: string;
   lastLogin?: string;
   createdAt?: string;
@@ -120,12 +121,16 @@ export const useStore = create<StoreState>((set, get) => ({
       localStorage.setItem(USER_KEY, JSON.stringify(user));
     }
     const isAdmin = user.role === 'SUPER_ADMIN' || user.role === 'SUB_AGENT';
+    // If mustChangePassword, force redirect to change password page
+    const startPage = user.mustChangePassword
+      ? Pages.CHANGE_PASSWORD
+      : (isAdmin ? Pages.ADMIN_DASHBOARD : Pages.DASHBOARD);
     set({
       user,
       token,
       isAuthenticated: true,
-      currentPage: isAdmin ? Pages.ADMIN_DASHBOARD : Pages.DASHBOARD,
-      pageHistory: [isAdmin ? Pages.ADMIN_DASHBOARD : Pages.DASHBOARD],
+      currentPage: startPage,
+      pageHistory: [startPage],
     });
   },
 

@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
         id: true, name: true, firstName: true, lastName: true, email: true,
         role: true, status: true, avatar: true, phone: true, agentId: true,
         invitationCode: true, referredBy: true, mustChangePassword: true,
+        passwordChangedAt: true,
         lastLogin: true, createdAt: true, updatedAt: true,
       },
     });

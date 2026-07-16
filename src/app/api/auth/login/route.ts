@@ -3,6 +3,9 @@ import prisma from '@/lib/db';
 import { comparePassword, signToken } from '@/lib/auth';
 import { seedDatabase } from '@/lib/seed';
 
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
 export async function POST(req: NextRequest) {
   try {
     // Auto-seed on first login
@@ -36,18 +39,38 @@ export async function POST(req: NextRequest) {
       await prisma.loginLog.create({
         data: { userId: user.id, email: user.email, success: false, ip: ip || undefined, userAgent: userAgent || undefined },
       });
-      return NextResponse.json({ error: 'Account locked' }, { status: 403 });
+      return NextResponse.json({ error: 'Account locked. Contact administrator.' }, { status: 403 });
     }
 
     const valid = await comparePassword(password, user.password);
     if (!valid) {
+      // Count recent failed attempts
+      const recentFailures = await prisma.loginLog.count({
+        where: {
+          userId: user.id,
+          success: false,
+          createdAt: { gte: new Date(Date.now() - LOCKOUT_MINUTES * 60 * 1000) },
+        },
+      });
+
       await prisma.loginLog.create({
         data: { userId: user.id, email: user.email, success: false, ip: ip || undefined, userAgent: userAgent || undefined },
       });
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+
+      // Lock account after MAX_FAILED_ATTEMPTS
+      if (recentFailures + 1 >= MAX_FAILED_ATTEMPTS) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { status: 'LOCKED' },
+        });
+        return NextResponse.json({ error: `Account locked after ${MAX_FAILED_ATTEMPTS} failed attempts. Contact administrator.` }, { status: 403 });
+      }
+
+      const remaining = MAX_FAILED_ATTEMPTS - (recentFailures + 1);
+      return NextResponse.json({ error: `Invalid credentials. ${remaining} attempt(s) remaining.` }, { status: 401 });
     }
 
-    // Successful login
+    // Successful login — reset any lockout concerns
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
@@ -77,6 +100,7 @@ export async function POST(req: NextRequest) {
         agentId: user.agentId,
         invitationCode: user.invitationCode,
         mustChangePassword: user.mustChangePassword,
+        passwordChangedAt: user.passwordChangedAt,
         lastLogin: user.lastLogin,
         createdAt: user.createdAt,
       },

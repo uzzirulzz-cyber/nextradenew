@@ -22,10 +22,11 @@ model User {
   agentId           String?   // Sub-Agent who referred this user
   invitationCode    String?   // Code used at registration (immutable unless SUPER_ADMIN changes it)
   referredBy        String?
-  mustChangePassword Boolean  @default(false)
-  lastLogin         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  mustChangePassword  Boolean   @default(false)
+  passwordChangedAt  DateTime?
+  lastLogin          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   wallets      Wallet[]
   transactions Transaction[]
@@ -141,11 +142,13 @@ model Referral {
 }
 
 // ======================== INVITATION CODE ========================
+// Sub-Agent codes (role=AGENT_CODE): reusable, createdBy = Sub-Agent's ID, never marked USED
+// User codes (role=USER): single-use, created by admin or Sub-Agent
 model InvitationCode {
   id        String    @id @default(uuid())
   code      String    @unique
-  role      String    // SUB_AGENT, USER
-  createdBy String
+  role      String    // AGENT_CODE (reusable Sub-Agent code), USER (single-use)
+  createdBy String    // Owner: Sub-Agent ID for AGENT_CODE, admin/agent for USER
   usedBy    String?
   status    String    @default("UNUSED") // UNUSED, USED, DISABLED
   usedAt    DateTime?
@@ -153,6 +156,7 @@ model InvitationCode {
   createdAt DateTime  @default(now())
 
   @@index([code])
+  @@index([createdBy])
 }
 
 // ======================== AGENT CONFIG ========================

@@ -1,19 +1,21 @@
 import prisma from './db';
 import { hashPassword } from './auth';
 
+const SEED_PASSWORD = 'bixby1122!!';
+
 const SUB_AGENTS = [
-  { name: 'SubAgent 1', email: 'subagent1@trade.com', code: 'PB-AG001' },
-  { name: 'SubAgent 2', email: 'subagent2@trade.com', code: 'PB-AG002' },
-  { name: 'SubAgent 3', email: 'subagent3@trade.com', code: 'PB-AG003' },
-  { name: 'SubAgent 4', email: 'subagent4@trade.com', code: 'PB-AG004' },
-  { name: 'SubAgent 5', email: 'subagent5@trade.com', code: 'PB-AG005' },
+  { name: 'SubAgent 1', email: 'subagent1@trade.com',  code: 'PB-AG001' },
+  { name: 'SubAgent 2', email: 'subagent2@trade2.com', code: 'PB-AG002' },
+  { name: 'SubAgent 3', email: 'subagent3@trade3.com', code: 'PB-AG003' },
+  { name: 'SubAgent 4', email: 'subagent4@trade4.com', code: 'PB-AG004' },
+  { name: 'SubAgent 5', email: 'subagent5@trade5.com', code: 'PB-AG005' },
 ];
 
 export async function seedDatabase() {
   const results: string[] = [];
 
   // ── Super Admin ──────────────────────────────────────────────
-  const adminPw = await hashPassword('123playbeat');
+  const adminPw = await hashPassword(SEED_PASSWORD);
   let admin = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN' } });
   if (!admin) {
     admin = await prisma.user.create({
@@ -23,7 +25,8 @@ export async function seedDatabase() {
         password: adminPw,
         role: 'SUPER_ADMIN',
         status: 'ACTIVE',
-        mustChangePassword: false,
+        mustChangePassword: true,   // Force password change on first login
+        passwordChangedAt: null,     // Never changed — seeded
       },
     });
     results.push(`Created Super Admin: ${admin.email}`);
@@ -43,45 +46,69 @@ export async function seedDatabase() {
         },
       },
     });
+  } else {
+    // Update existing admin password & flags if needed
+    await prisma.user.update({
+      where: { id: admin.id },
+      data: {
+        password: adminPw,
+        mustChangePassword: true,
+        passwordChangedAt: null,
+      },
+    });
+    results.push(`Updated Super Admin: ${admin.email}`);
   }
 
   // ── 5 Sub-Agents ───────────────────────────────────────────
-  const agentPw = await hashPassword('default');
+  const agentPw = await hashPassword(SEED_PASSWORD);
   const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'];
 
   for (const agentDef of SUB_AGENTS) {
     const existing = await prisma.user.findUnique({ where: { email: agentDef.email } });
-    if (existing) {
-      results.push(`Sub-Agent already exists (${agentDef.email})`);
-      continue;
-    }
 
-    const agent = await prisma.user.create({
-      data: {
-        name: agentDef.name,
-        email: agentDef.email,
-        password: agentPw,
-        role: 'SUB_AGENT',
-        status: 'ACTIVE',
-        agentId: admin!.id,
-        mustChangePassword: true,
-      },
-    });
-
-    // Wallet for agent
-    await prisma.wallet.create({
-      data: {
-        userId: agent.id,
-        type: 'SPOT',
-        totalEquity: 10000 + 0.5 * 67000,
-        balances: {
-          create: [
-            { currency: 'USDT', amount: 10000, frozen: 0 },
-            { currency: 'BTC', amount: 0.5, frozen: 0 },
-          ],
+    let agent;
+    if (!existing) {
+      agent = await prisma.user.create({
+        data: {
+          name: agentDef.name,
+          email: agentDef.email,
+          password: agentPw,
+          role: 'SUB_AGENT',
+          status: 'ACTIVE',
+          agentId: admin!.id,
+          mustChangePassword: true,   // Force password change on first login
+          passwordChangedAt: null,
         },
-      },
-    });
+      });
+      results.push(`Created ${agentDef.name}: ${agentDef.email}`);
+
+      // Wallet for agent
+      await prisma.wallet.create({
+        data: {
+          userId: agent.id,
+          type: 'SPOT',
+          totalEquity: 10000 + 0.5 * 67000,
+          balances: {
+            create: [
+              { currency: 'USDT', amount: 10000, frozen: 0 },
+              { currency: 'BTC', amount: 0.5, frozen: 0 },
+            ],
+          },
+        },
+      });
+    } else {
+      agent = existing;
+      // Update password and flags
+      await prisma.user.update({
+        where: { id: agent.id },
+        data: {
+          password: agentPw,
+          mustChangePassword: true,
+          passwordChangedAt: null,
+        },
+      });
+      results.push(`Updated ${agentDef.name}: ${agentDef.email}`);
+    }
 
     // Agent config
     await prisma.agentConfig.upsert({
@@ -98,40 +125,24 @@ export async function seedDatabase() {
       },
     });
 
-    // Invitation code (one per sub-agent, permanently linked)
+    // Sub-Agent's reusable invitation code (AGENT_CODE = permanent, never marked USED)
     await prisma.invitationCode.upsert({
       where: { code: agentDef.code },
-      update: {},
+      update: {
+        // Ensure createdBy points to the Sub-Agent (not admin)
+        createdBy: agent.id,
+        role: 'AGENT_CODE',
+        status: 'UNUSED', // Always stays UNUSED — reusable
+        usedBy: null,
+        usedAt: null,
+      },
       create: {
         code: agentDef.code,
-        role: 'SUB_AGENT',
-        createdBy: admin!.id,
-        status: 'USED',
-        usedBy: agent.id,
-        usedAt: new Date(),
+        role: 'AGENT_CODE',  // Reusable Sub-Agent code
+        createdBy: agent.id, // Owner = the Sub-Agent themselves
+        status: 'UNUSED',
       },
     });
-
-    results.push(`Created ${agentDef.name}: ${agentDef.email} (${agentDef.code})`);
-  }
-
-  // ── User Invitation Codes (10 per sub-agent = 50 total) ────
-  for (const agentDef of SUB_AGENTS) {
-    for (let i = 1; i <= 10; i++) {
-      const code = `${agentDef.code}-U${String(i).padStart(3, '0')}`;
-      const exists = await prisma.invitationCode.findUnique({ where: { code } });
-      if (!exists) {
-        const agent = await prisma.user.findUnique({ where: { email: agentDef.email } });
-        await prisma.invitationCode.create({
-          data: {
-            code,
-            role: 'USER',
-            createdBy: agent!.id,
-            status: 'UNUSED',
-          },
-        });
-      }
-    }
   }
 
   return {

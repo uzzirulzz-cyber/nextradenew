@@ -77,13 +77,37 @@ export async function POST(req: NextRequest) {
     const code = await prisma.invitationCode.findUnique({
       where: { code: codeUpper },
     });
-    if (!code || code.status !== 'UNUSED') {
-      return NextResponse.json({ error: 'Invalid or used invitation code' }, { status: 400 });
+    if (!code || code.status === 'DISABLED') {
+      return NextResponse.json({ error: 'Invalid or disabled invitation code' }, { status: 400 });
     }
 
-    // Only USER role via invitation codes (sub-agents are seeded by admin)
-    const role = 'USER';
-    const referrerId = code.createdBy; // The Sub-Agent who owns this code
+    // For single-use USER codes, check if already used
+    if (code.role === 'USER' && code.status === 'USED') {
+      return NextResponse.json({ error: 'Invitation code has already been used' }, { status: 400 });
+    }
+
+    // Look up the code owner (createdBy = the Sub-Agent for AGENT_CODE, or admin/agent for USER)
+    const codeOwner = await prisma.user.findUnique({ where: { id: code.createdBy } });
+    if (!codeOwner || codeOwner.status !== 'ACTIVE') {
+      return NextResponse.json({ error: 'Invitation code owner is inactive or not found' }, { status: 400 });
+    }
+
+    // Determine the Sub-Agent this customer belongs to
+    let agentId: string;
+    if (code.role === 'AGENT_CODE') {
+      // Reusable Sub-Agent code — createdBy IS the Sub-Agent
+      agentId = code.createdBy;
+    } else {
+      // Single-use USER code — createdBy could be admin or Sub-Agent
+      // If createdBy is a SUB_AGENT, link to them; otherwise link to their agentId
+      if (codeOwner.role === 'SUB_AGENT') {
+        agentId = codeOwner.id;
+      } else if (codeOwner.agentId) {
+        agentId = codeOwner.agentId;
+      } else {
+        return NextResponse.json({ error: 'Cannot determine Sub-Agent for this code' }, { status: 400 });
+      }
+    }
 
     // Check if email exists
     const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
@@ -101,25 +125,27 @@ export async function POST(req: NextRequest) {
         lastName: finalLastName || null,
         email: email.toLowerCase(),
         password: hashedPw,
-        role,
+        role: 'USER',
         status: 'ACTIVE',
         phone: phone || null,
         mustChangePassword: false,
-        agentId: referrerId,          // Permanent link to Sub-Agent
-        invitationCode: codeUpper,    // Permanent record of which code was used
-        referredBy: referrerId,
+        agentId: agentId,
+        invitationCode: codeUpper,
+        referredBy: agentId,
       },
     });
 
-    // Mark code as used
-    await prisma.invitationCode.update({
-      where: { code: codeUpper },
-      data: {
-        status: 'USED',
-        usedBy: user.id,
-        usedAt: new Date(),
-      },
-    });
+    // Mark single-use USER codes as used; AGENT_CODE codes stay reusable
+    if (code.role === 'USER') {
+      await prisma.invitationCode.update({
+        where: { code: codeUpper },
+        data: {
+          status: 'USED',
+          usedBy: user.id,
+          usedAt: new Date(),
+        },
+      });
+    }
 
     // Create wallet with default balances
     await prisma.wallet.create({
@@ -140,7 +166,7 @@ export async function POST(req: NextRequest) {
     // Create referral record
     await prisma.referral.create({
       data: {
-        referrerId,
+        referrerId: agentId,
         referredId: user.id,
         referralCode: codeUpper,
         level: 1,
@@ -152,7 +178,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       email: user.email,
       role: user.role,
-      agentId: referrerId,
+      agentId: agentId,
     });
 
     return NextResponse.json({
@@ -164,7 +190,7 @@ export async function POST(req: NextRequest) {
         role: user.role,
         status: user.status,
         phone: user.phone,
-        agentId: referrerId,
+        agentId: agentId,
         invitationCode: codeUpper,
         mustChangePassword: user.mustChangePassword,
         createdAt: user.createdAt,

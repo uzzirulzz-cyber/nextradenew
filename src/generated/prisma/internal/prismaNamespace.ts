@@ -1282,6 +1282,7 @@ export const UserScalarFieldEnum = {
   invitationCode: 'invitationCode',
   referredBy: 'referredBy',
   mustChangePassword: 'mustChangePassword',
+  passwordChangedAt: 'passwordChangedAt',
   lastLogin: 'lastLogin',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'

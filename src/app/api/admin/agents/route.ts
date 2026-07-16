@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
 
     const agents = await prisma.user.findMany({
       where: { role: 'SUB_AGENT' },
-      select: { id: true, name: true, firstName: true, lastName: true, email: true, role: true, status: true, avatar: true, phone: true, agentId: true, lastLogin: true, createdAt: true, updatedAt: true },
+      select: { id: true, name: true, firstName: true, lastName: true, email: true, role: true, status: true, avatar: true, phone: true, agentId: true, mustChangePassword: true, passwordChangedAt: true, lastLogin: true, createdAt: true, updatedAt: true },
       orderBy: { createdAt: 'desc' },
     });
     const agentIds = agents.map(a => a.id);
@@ -19,6 +19,14 @@ export async function GET(request: NextRequest) {
     const configs = await prisma.agentConfig.findMany({ where: { agentId: { in: agentIds } } });
     const configMap = new Map<string, any>();
     for (const c of configs) configMap.set(c.agentId, c);
+
+    // Agent invitation codes (AGENT_CODE type, createdBy = agent ID)
+    const agentCodes = await prisma.invitationCode.findMany({
+      where: { createdBy: { in: agentIds }, role: 'AGENT_CODE' },
+      select: { code: true, createdBy: true, status: true },
+    });
+    const agentCodeMap = new Map<string, string>();
+    for (const ac of agentCodes) agentCodeMap.set(ac.createdBy, ac.code);
 
     // User counts per agent
     const userCounts = await prisma.user.groupBy({
@@ -49,6 +57,7 @@ export async function GET(request: NextRequest) {
     const enriched = agents.map(a => ({
       ...a,
       _id: a.id,
+      invitationCode: agentCodeMap.get(a.id) || null,
       config: configMap.get(a.id) || null,
       userCount: userCountMap.get(a.id) || 0,
       referralStats: referralMap.get(a.id) || { totalCommission: 0, referrals: 0 },

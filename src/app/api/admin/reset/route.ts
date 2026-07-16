@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
         walletsCreated++;
       }
 
-      // 9. Reset invitation codes: set all UNUSED, clear usedBy/usedAt (except agent codes)
+      // 9. Reset USER invitation codes: set all UNUSED, clear usedBy/usedAt (AGENT_CODE codes stay untouched)
       const resetCodes = await tx.invitationCode.updateMany({
         where: {
           role: 'USER',

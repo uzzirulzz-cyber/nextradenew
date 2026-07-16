@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { verifyToken, extractBearerToken, hashPassword, comparePassword, signToken } from '@/lib/auth';
+import { verifyToken, extractBearerToken, hashPassword, comparePassword } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,8 +14,22 @@ export async function POST(req: NextRequest) {
     if (!currentPassword || !newPassword) {
       return NextResponse.json({ error: 'Both passwords required' }, { status: 400 });
     }
-    if (newPassword.length < 6) {
-      return NextResponse.json({ error: 'New password must be at least 6 characters' }, { status: 400 });
+
+    // Password strength validation (same as registration)
+    if (newPassword.length < 8) {
+      return NextResponse.json({ error: 'New password must be at least 8 characters long' }, { status: 400 });
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return NextResponse.json({ error: 'Password must contain at least 1 uppercase letter' }, { status: 400 });
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      return NextResponse.json({ error: 'Password must contain at least 1 lowercase letter' }, { status: 400 });
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      return NextResponse.json({ error: 'Password must contain at least 1 digit' }, { status: 400 });
+    }
+    if (newPassword === currentPassword) {
+      return NextResponse.json({ error: 'New password must be different from current password' }, { status: 400 });
     }
 
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
@@ -24,15 +38,27 @@ export async function POST(req: NextRequest) {
     const valid = await comparePassword(currentPassword, user.password);
     if (!valid) return NextResponse.json({ error: 'Current password incorrect' }, { status: 400 });
 
+    const now = new Date();
     await prisma.user.update({
       where: { id: payload.userId },
       data: {
         password: await hashPassword(newPassword),
         mustChangePassword: false,
+        passwordChangedAt: now,
       },
     });
 
-    // Return updated user data so the frontend can update the store
+    // Log password change as security event
+    await prisma.notification.create({
+      data: {
+        userId: payload.userId,
+        type: 'SECURITY',
+        priority: 'HIGH',
+        title: 'Password Changed',
+        message: 'Your password was changed successfully.',
+      },
+    });
+
     return NextResponse.json({
       success: true,
       message: 'Password changed successfully',
@@ -46,6 +72,7 @@ export async function POST(req: NextRequest) {
         phone: user.phone,
         agentId: user.agentId,
         mustChangePassword: false,
+        passwordChangedAt: now.toISOString(),
       },
     });
   } catch (error) {

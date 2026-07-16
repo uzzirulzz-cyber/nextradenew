@@ -100,7 +100,7 @@ export async function PUT(request: NextRequest) {
     if (response) return response;
 
     const body = await request.json();
-    const { userId, status, role, phone, name, invitationCode } = body;
+    const { userId, status, role, phone, name, invitationCode, mustChangePassword, resetPassword } = body;
     if (!userId) {
       return NextResponse.json({ error: 'userId is required' }, { status: 400 });
     }
@@ -112,6 +112,24 @@ export async function PUT(request: NextRequest) {
     if (name) updateData.name = name;
     // Only SUPER_ADMIN can change invitationCode
     if (invitationCode !== undefined) updateData.invitationCode = invitationCode;
+    // Force password change on next login
+    if (mustChangePassword !== undefined) {
+      updateData.mustChangePassword = mustChangePassword;
+      if (mustChangePassword) updateData.passwordChangedAt = null;
+    }
+    // Unlock a locked account by setting status to ACTIVE
+    if (status === 'ACTIVE') {
+      updateData.status = 'ACTIVE';
+    }
+
+    // Admin reset password (SUPER_ADMIN only)
+    if (resetPassword) {
+      const { hashPassword } = await import('@/lib/auth');
+      updateData.password = await hashPassword(resetPassword);
+      updateData.mustChangePassword = true;
+      updateData.passwordChangedAt = null;
+      updateData.status = 'ACTIVE'; // Also unlock if locked
+    }
 
     const user = await prisma.user.update({
       where: { id: userId },

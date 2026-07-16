@@ -92,8 +92,8 @@ export async function POST(request: NextRequest) {
     const { role, count, expiresInHours } = body;
 
     const codeRole = role || 'USER';
-    if (!['SUB_AGENT', 'USER'].includes(codeRole)) {
-      return NextResponse.json({ error: 'Role must be SUB_AGENT or USER' }, { status: 400 });
+    if (!['AGENT_CODE', 'USER'].includes(codeRole)) {
+      return NextResponse.json({ error: 'Role must be AGENT_CODE or USER' }, { status: 400 });
     }
 
     const codeCount = Math.min(50, Math.max(1, count || 1));
@@ -119,11 +119,23 @@ export async function POST(request: NextRequest) {
       }
       existingCodes.add(newCode);
 
+      // For AGENT_CODE, createdBy should be the Sub-Agent ID (passed in body)
+      // For USER codes, createdBy is the admin creating them
+      const createdBy = codeRole === 'AGENT_CODE' && body.agentId ? body.agentId : payload.userId;
+
+      // Verify agent exists if creating AGENT_CODE
+      if (codeRole === 'AGENT_CODE' && body.agentId) {
+        const agent = await prisma.user.findUnique({ where: { id: body.agentId } });
+        if (!agent || agent.role !== 'SUB_AGENT') {
+          return NextResponse.json({ error: 'Invalid Sub-Agent ID' }, { status: 400 });
+        }
+      }
+
       const code = await prisma.invitationCode.create({
         data: {
           code: newCode,
           role: codeRole,
-          createdBy: payload.userId,
+          createdBy,
           status: 'UNUSED',
           ...(expiresAt ? { expiresAt } : {}),
         },
